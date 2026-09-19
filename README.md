@@ -37,6 +37,8 @@ The **Small-cap growth preset** button sets market cap to $300M–$2B and revenu
 
 The margin-of-safety models use trailing numbers and lean on the growth rate, so treat their estimates cautiously for fast growers.
 
+The market cap and revenue growth boxes sit in a highlighted **Key filters** panel. Under each ticker, a green or red footnote line says how far that stock beats or misses your active filters: percentage points for percentages (revenue growth, ROE, margin of safety), and a percent of the limit for P/E, debt/equity and market cap. Green and red cells mark the market cap and revenue growth results, and the row detail has a full **Filter check** list. Tick **Also show stocks that miss a filter** to keep failing stocks visible, dimmed, so you can see how close they came. The growth preset turns this on. The CSV export gains a "Meets filters" column.
+
 ## Position size calculator
 
 Enter an account size, a risk percent per trade, an entry price and a stop price. It returns the share count that would lose about that percent if the stop fills, capped at what the account can buy. Price gaps can fill below a stop and lose more. Nothing entered here is saved, and it is arithmetic, not advice.
