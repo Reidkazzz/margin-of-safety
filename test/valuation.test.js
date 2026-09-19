@@ -72,4 +72,34 @@ assert.equal(V.passes(rows[0], Object.assign({}, none, { mos: 20, pe: 15, roe: 1
 assert.equal(V.passes(rows[0], Object.assign({}, none, { de: 0.3 })), false);
 assert.equal(V.passes(Object.assign({}, rows[0], { debtEq: null }), Object.assign({}, none, { de: 2 })), false);
 
+// flags
+const hasFlag = (r, text) => r.flags.some((f) => f.includes(text));
+
+// zero-model flag: no EPS, book value or free cash flow means nothing can run
+const empty = V.analyze(20, {}, A);
+assert.equal(empty.value, null);
+assert.equal(empty.mos, null);
+assert.ok(hasFlag(empty, 'No valuation model could run'));
+assert.ok(!hasFlag(cheap, 'No valuation model could run'));
+
+// growth-disagreement flag: EPS and revenue growth far apart
+const split = V.analyze(30, { epsTTM: 5, bookValuePerShareQuarterly: 25, epsGrowth5Y: 40, revenueGrowth5Y: 5 }, A);
+assert.ok(hasFlag(split, 'differ a lot'));
+assert.ok(!hasFlag(cheap, 'differ a lot'), 'close growth figures should not flag');
+const oneSided = V.analyze(30, { epsTTM: 5, bookValuePerShareQuarterly: 25, epsGrowth5Y: 40 }, A);
+assert.ok(!hasFlag(oneSided, 'differ a lot'), 'needs both growth figures');
+
+// 52-week range: near the low flags, a degenerate or missing range does not
+const nearLow = V.analyze(25.5, { epsTTM: 5, bookValuePerShareQuarterly: 25, '52WeekHigh': 40, '52WeekLow': 25 }, A);
+assert.ok(hasFlag(nearLow, '52-week low'));
+const flatRange = V.analyze(25, { epsTTM: 5, bookValuePerShareQuarterly: 25, '52WeekHigh': 25, '52WeekLow': 25 }, A);
+assert.ok(!hasFlag(flatRange, '52-week low'), 'high equal to low must not divide by zero');
+const noRange = V.analyze(25, { epsTTM: 5, bookValuePerShareQuarterly: 25 }, A);
+assert.ok(!hasFlag(noRange, '52-week low'));
+assert.ok(!hasFlag(cheap, '52-week low'), 'mid-range price should not flag');
+
+// growth cap flag prints a clean percentage, not 7.000000000000001
+const capped = V.analyze(10, { epsTTM: 1, epsGrowth5Y: 90, revenueGrowth5Y: 70 }, Object.assign({}, A, { growthCap: 0.07 }));
+assert.ok(hasFlag(capped, 'capped at 7%.'));
+
 console.log('All valuation tests passed.');
