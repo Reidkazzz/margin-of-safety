@@ -1,0 +1,189 @@
+/*
+ * valuation.js — the math behind the screener. No DOM, no network.
+ *
+ * Three independent estimates of what one share is worth, blended by median:
+ *   1. Graham number          sqrt(22.5 × EPS × book value per share)
+ *   2. Discounted cash flow   10 years of free cash flow per share, growth fading to a terminal rate
+ *   3. Graham growth formula  EPS × (8.5 + 2g) × 4.4 / AAA bond yield
+ *
+ * Margin of safety = (estimated value − price) / estimated value.
+ */
+(function (root) {
+  'use strict';
+
+  // Finnhub /stock/metric fields this file reads. The page stores only these per ticker.
+  const METRIC_KEYS = [
+    'epsTTM', 'epsBasicExclExtraItemsTTM', 'epsInclExtraItemsTTM', 'epsExclExtraItemsTTM', 'epsAnnual',
+    'bookValuePerShareQuarterly', 'bookValuePerShareAnnual',
+    'freeCashFlowPerShareTTM', 'freeCashFlowPerShareAnnual', 'pfcfShareTTM', 'pfcfShareAnnual',
+    'peTTM', 'peBasicExclExtraTTM',
+    'epsGrowth5Y', 'revenueGrowth5Y', 'revenueGrowthTTMYoy',
+    'roeTTM', 'roeRfy',
+    'totalDebt/totalEquityQuarterly', 'totalDebt/totalEquityAnnual',
+    'marketCapitalization', '52WeekHigh', '52WeekLow',
+    'dividendYieldIndicatedAnnual', 'currentDividendYieldTTM'
+  ];
+
+  const DEFAULT_GROWTH = 0.03; // used when the data provider has no growth figures
+
+  const num = (v) => (typeof v === 'number' && isFinite(v) ? v : null);
+  const first = (m, keys) => {
+    for (const k of keys) {
+      const v = num(m[k]);
+      if (v !== null) return v;
+    }
+    return null;
+  };
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const median = (arr) => {
+    const s = arr.slice().sort((a, b) => a - b);
+    const mid = Math.floor(s.length / 2);
+    return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+  };
+
+  /** Present value per share of free cash flow, growth fading linearly from g0 to gT over `years`. */
+  function dcfPerShare(fcf0, g0, gT, r, years) {
+    years = years || 10;
+    if (!(fcf0 > 0) || !(r > gT + 0.005)) return null;
+    let f = fcf0;
+    let pv = 0;
+    for (let t = 1; t <= years; t++) {
+      const g = g0 + ((gT - g0) * (t - 1)) / (years - 1);
+      f *= 1 + g;
+      pv += f / Math.pow(1 + r, t);
+    }
+    pv += (f * (1 + gT)) / (r - gT) / Math.pow(1 + r, years);
+    return pv;
+  }
+
+  function grahamNumber(eps, bvps) {
+    return eps > 0 && bvps > 0 ? Math.sqrt(22.5 * eps * bvps) : null;
+  }
+
+  /** g0Pct is the growth rate in percent (e.g. 8 for 8%); aaaPct is the AAA yield in percent. */
+  function grahamGrowth(eps, g0Pct, aaaPct) {
+    if (!(eps > 0) || !(aaaPct > 0)) return null;
+    return (eps * (8.5 + 2 * Math.max(0, g0Pct)) * 4.4) / aaaPct;
+  }
+
+  /**
+   * Turn a price and a raw metric map into everything the table needs.
+   * A = { discount, terminal, growthCap, aaa } — discount/terminal/growthCap as decimals, aaa in percent.
+   */
+  function analyze(price, m, A) {
+    if (!(price > 0)) return null;
+    m = m || {};
+
+    const eps = first(m, ['epsTTM', 'epsBasicExclExtraItemsTTM', 'epsInclExtraItemsTTM', 'epsExclExtraItemsTTM', 'epsAnnual']);
+    const bvps = first(m, ['bookValuePerShareQuarterly', 'bookValuePerShareAnnual']);
+
+    let fcfps = first(m, ['freeCashFlowPerShareTTM', 'freeCashFlowPerShareAnnual']);
+    if (fcfps === null) {
+      const pf = first(m, ['pfcfShareTTM', 'pfcfShareAnnual']);
+      if (pf !== null && pf !== 0) fcfps = price / pf;
+    }
+
+    // Growth: average of 5-year EPS and revenue growth; fall back to latest revenue growth.
+    let parts = [num(m.epsGrowth5Y), num(m.revenueGrowth5Y)].filter((v) => v !== null);
+    if (!parts.length) parts = [num(m.revenueGrowthTTMYoy)].filter((v) => v !== null);
+    const growth = parts.length ? parts.reduce((a, b) => a + b, 0) / parts.length / 100 : null;
+    const growthAssumed = growth === null;
+    const g0 = clamp(growthAssumed ? DEFAULT_GROWTH : growth, -0.03, A.growthCap);
+
+    const roePct = first(m, ['roeTTM', 'roeRfy']);
+    const debtEq = first(m, ['totalDebt/totalEquityQuarterly', 'totalDebt/totalEquityAnnual']);
+    const divPct = first(m, ['dividendYieldIndicatedAnnual', 'currentDividendYieldTTM']);
+    const hi52 = num(m['52WeekHigh']);
+    const lo52 = num(m['52WeekLow']);
+
+    // Ratios use the live price so they stay consistent with the quote.
+    let pe = eps > 0 ? price / eps : null;
+    if (pe === null && eps === null) pe = first(m, ['peTTM', 'peBasicExclExtraTTM']);
+    const pb = bvps > 0 ? price / bvps : null;
+
+    const models = {
+      graham: grahamNumber(eps, bvps),
+      dcf: dcfPerShare(fcfps, g0, A.terminal, A.discount, 10),
+      growthFormula: grahamGrowth(eps, g0 * 100, A.aaa)
+    };
+    const modelNotes = {
+      graham: 'Needs positive EPS and book value per share.',
+      dcf: 'Needs positive free cash flow per share and a discount rate above terminal growth.',
+      growthFormula: 'Needs positive EPS.'
+    };
+    const available = Object.values(models).filter((v) => v !== null && v > 0);
+    const value = available.length ? median(available) : null;
+    const mos = value ? (value - price) / value : null;
+
+    const flags = [];
+    if (eps !== null && eps <= 0) flags.push('Negative earnings, so P/E and two of the three models are unavailable.');
+    if (fcfps !== null && fcfps <= 0) flags.push('Negative free cash flow.');
+    if (growthAssumed) flags.push('No growth data; assumed ' + DEFAULT_GROWTH * 100 + '% growth.');
+    if (available.length === 1) flags.push('Only one model could run, so treat the value estimate with extra caution.');
+    if (available.length > 1) {
+      const hi = Math.max.apply(null, available);
+      const lo = Math.min.apply(null, available);
+      if (hi / lo > 2) flags.push('The models disagree by more than 2×; the median may not mean much.');
+    }
+    if (hi52 && lo52 && hi52 > lo52 && (price - lo52) / (hi52 - lo52) < 0.1) {
+      flags.push('Trading near its 52-week low. Cheap for a reason? Check for a value trap.');
+    }
+    if (growth !== null && growth > A.growthCap) flags.push('Reported growth was capped at ' + A.growthCap * 100 + '%.');
+
+    return {
+      price, eps, bvps, fcfps, pe, pb,
+      fcfYield: fcfps !== null ? fcfps / price : null,
+      earningsYield: eps !== null ? eps / price : null,
+      bookYield: bvps !== null ? bvps / price : null,
+      roe: roePct !== null ? roePct / 100 : null,
+      debtEq,
+      dividendYield: divPct !== null ? divPct / 100 : null,
+      marketCap: num(m.marketCapitalization), // millions of USD
+      hi52, lo52,
+      growth, growthAssumed, g0,
+      models, modelNotes, value, mos, flags,
+      score: null
+    };
+  }
+
+  /** Percentile of v within the non-null values of `all` (0 to 1). Missing values score 0. */
+  function percentile(all, v) {
+    if (v === null || v === undefined) return 0;
+    const xs = all.filter((x) => x !== null && x !== undefined);
+    if (xs.length < 2) return 0.5;
+    let below = 0;
+    for (const x of xs) if (x < v) below++;
+    return below / (xs.length - 1);
+  }
+
+  const WEIGHTS = { mos: 0.4, fcfYield: 0.2, earningsYield: 0.2, bookYield: 0.1, roe: 0.1 };
+
+  /** Adds a 0–100 composite value score to each row, relative to the other rows loaded. */
+  function score(rows) {
+    const cols = {};
+    Object.keys(WEIGHTS).forEach((k) => { cols[k] = rows.map((r) => r[k]); });
+    rows.forEach((r) => {
+      let s = 0;
+      Object.keys(WEIGHTS).forEach((k) => { s += WEIGHTS[k] * percentile(cols[k], r[k]); });
+      r.score = Math.round(s * 100);
+    });
+    return rows;
+  }
+
+  /**
+   * Filters use the units shown in the page: mos and roe in percent, pe and de as plain numbers.
+   * A blank (null) filter is ignored. If a filter is set and the row lacks that metric, the row is hidden.
+   */
+  function passes(r, F) {
+    if (F.mos !== null && !(r.mos !== null && r.mos * 100 >= F.mos)) return false;
+    if (F.pe !== null && !(r.pe !== null && r.pe > 0 && r.pe <= F.pe)) return false;
+    if (F.roe !== null && !(r.roe !== null && r.roe * 100 >= F.roe)) return false;
+    if (F.de !== null && !(r.debtEq !== null && r.debtEq <= F.de)) return false;
+    if (F.fcf && !(r.fcfps !== null && r.fcfps > 0)) return false;
+    return true;
+  }
+
+  const api = { METRIC_KEYS, WEIGHTS, dcfPerShare, grahamNumber, grahamGrowth, analyze, score, passes, median };
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.Valuation = api;
+})(typeof window !== 'undefined' ? window : globalThis);
