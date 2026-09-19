@@ -196,3 +196,23 @@ tr.detail td { padding: 0; background: var(--bg); text-align: left; white-space:
 .method summary { cursor: pointer; font-weight: 600; }
 .method-body { max-width: 74ch; padding-top: 8px; color: var(--muted); font-size: 0.92rem; }
 .method-body strong { color: var(--ink); }
+
+/* Key filters and filter footnotes */
+.keyfilters { margin: 0 0 14px; padding: 10px 12px 12px; background: var(--surface); border: 1px solid var(--accent); border-left-width: 4px; border-radius: 5px; }
+.keytag { margin: 0 0 8px; font-size: 0.74rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--accent); }
+.pair .wide { grid-column: 1 / -1; }
+
+.fn { display: block; width: 210px; margin: 3px 0 0 1.1em; font-size: 0.74rem; font-weight: 400; line-height: 1.3; white-space: normal; }
+.fn.ok { color: var(--under); }
+.fn.bad { color: var(--over); }
+td.ok { color: var(--under); font-weight: 600; }
+td.bad { color: var(--over); font-weight: 600; }
+tr.row.miss td { opacity: 0.6; }
+
+.checks { grid-column: 1 / -1; }
+.checks ul { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 4px 24px; margin: 0; padding: 0; list-style: none; font-size: 0.86rem; }
+.checks li.ok { color: var(--under); }
+.checks li.bad { color: var(--over); }
+.checks em { margin-left: 4px; padding: 1px 6px; border: 1px solid var(--accent); border-radius: 8px; color: var(--accent); font-size: 0.7rem; font-style: normal; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.footnote { max-width: 90ch; margin: 10px 0 0; font-size: 0.82rem; color: var(--muted); }
