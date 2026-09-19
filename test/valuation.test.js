@@ -121,6 +121,44 @@ assert.equal(V.passes({ marketCap: null, revGrowth: null }, none), true, 'filter
 assert.equal(V.passes(inod, none), true, 'older filter objects without the new keys still work');
 assert.equal(V.passes(inod, { mos: null, pe: null, roe: null, de: null, fcf: false }), true);
 
+// filterChecks: how far each active filter is beaten or missed
+const byId = (checks, id) => checks.find((c) => c.id === id);
+const growthF = capF({ capMin: 300, capMax: 2000, rev: 17 });
+const good = V.filterChecks({ marketCap: 1960, revGrowth: 0.58 }, growthF);
+assert.equal(good.length, 3, 'only active filters are checked');
+assert.equal(byId(good, 'rev').pass, true);
+close(byId(good, 'rev').delta, 41, 1e-9); // 58% against 17% is 41 points ahead
+close(byId(good, 'capMax').delta, 2, 1e-9); // 1,960 against a 2,000 ceiling is 2% under it
+close(byId(good, 'capMin').delta, 553.33, 0.01); // 1,960 against a 300 floor is 553% above it
+assert.ok(good.every((c) => c.pass));
+assert.ok(byId(good, 'rev').key && byId(good, 'capMin').key && byId(good, 'capMax').key, 'growth filters are key');
+
+const bad = V.filterChecks({ marketCap: 2500, revGrowth: 0.16 }, growthF);
+assert.equal(byId(bad, 'rev').pass, false);
+close(byId(bad, 'rev').delta, -1, 1e-9); // 1 point short
+assert.equal(byId(bad, 'capMax').pass, false);
+close(byId(bad, 'capMax').delta, -25, 1e-9); // 25% over the ceiling
+assert.equal(V.passes({ marketCap: 2500, revGrowth: 0.16 }, growthF), false);
+
+const gone = V.filterChecks({ marketCap: null, revGrowth: null }, growthF);
+assert.ok(gone.every((c) => c.missing && !c.pass && c.delta === null), 'missing data fails with no margin');
+
+// value filters: pts for percentages, percent of the limit for ratios, yes/no for free cash flow
+const vf = V.filterChecks({ mos: 0.3, pe: 12, roe: 0.05, debtEq: 3, fcfps: -1 },
+  { mos: 20, pe: 15, roe: 8, de: 2, fcf: true, capMin: null, capMax: null, rev: null });
+close(byId(vf, 'mos').delta, 10, 1e-9);
+close(byId(vf, 'pe').delta, 20, 1e-9); // 12 against a 15 ceiling is 20% under it
+close(byId(vf, 'roe').delta, -3, 1e-9);
+close(byId(vf, 'de').delta, -50, 1e-9);
+assert.equal(byId(vf, 'fcf').pass, false);
+assert.equal(byId(vf, 'fcf').kind, 'flag');
+// a non-positive P/E fails and gets no margin, and a zero limit does not divide by zero
+const negPe = V.filterChecks({ pe: -4 }, capF({ pe: 15 }));
+assert.equal(byId(negPe, 'pe').pass, false);
+assert.equal(byId(negPe, 'pe').delta, null);
+assert.equal(byId(V.filterChecks({ debtEq: 0 }, capF({ de: 0 })), 'de').delta, null);
+assert.equal(V.filterChecks({}, none).length, 0, 'no active filters means no checks');
+
 // position size: risk 2% of 10,000 = 200; 5 per share stop distance -> 40 shares
 const ps = V.positionSize(10000, 2, 50, 45);
 assert.equal(ps.shares, 40);
