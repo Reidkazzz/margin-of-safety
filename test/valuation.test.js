@@ -102,4 +102,46 @@ assert.ok(!hasFlag(cheap, '52-week low'), 'mid-range price should not flag');
 const capped = V.analyze(10, { epsTTM: 1, epsGrowth5Y: 90, revenueGrowth5Y: 70 }, Object.assign({}, A, { growthCap: 0.07 }));
 assert.ok(hasFlag(capped, 'capped at 7%.'));
 
+// revenue growth: latest quarter YoY wins, TTM is the fallback, missing stays null
+const g1 = V.analyze(10, { epsTTM: 1, revenueGrowthQuarterlyYoy: 58, revenueGrowthTTMYoy: 30 }, A);
+close(g1.revGrowth, 0.58, 1e-9);
+close(V.analyze(10, { epsTTM: 1, revenueGrowthTTMYoy: 30 }, A).revGrowth, 0.30, 1e-9);
+assert.equal(V.analyze(10, { epsTTM: 1 }, A).revGrowth, null);
+
+// growth-screen filters: market cap in $M, revenue growth in percent
+const inod = { marketCap: 1960, revGrowth: 0.58 };
+const capF = (extra) => Object.assign({}, none, extra);
+assert.equal(V.passes(inod, capF({ capMin: 300, capMax: 2000, rev: 17 })), true);
+assert.equal(V.passes({ marketCap: 2500, revGrowth: 0.5 }, capF({ capMax: 2000 })), false, 'above max cap');
+assert.equal(V.passes({ marketCap: 250, revGrowth: 0.5 }, capF({ capMin: 300 })), false, 'below min cap');
+assert.equal(V.passes({ marketCap: 1000, revGrowth: 0.16 }, capF({ rev: 17 })), false, 'growth under the floor');
+assert.equal(V.passes({ marketCap: 1000, revGrowth: 0.17 }, capF({ rev: 17 })), true, 'growth exactly at the floor');
+assert.equal(V.passes({ marketCap: null, revGrowth: 0.5 }, capF({ capMin: 300 })), false, 'missing cap is hidden when filtered');
+assert.equal(V.passes({ marketCap: null, revGrowth: null }, none), true, 'filters off ignore missing data');
+assert.equal(V.passes(inod, none), true, 'older filter objects without the new keys still work');
+assert.equal(V.passes(inod, { mos: null, pe: null, roe: null, de: null, fcf: false }), true);
+
+// position size: risk 2% of 10,000 = 200; 5 per share stop distance -> 40 shares
+const ps = V.positionSize(10000, 2, 50, 45);
+assert.equal(ps.shares, 40);
+close(ps.value, 2000, 1e-9);
+close(ps.dollarRisk, 200, 1e-9);
+close(ps.pctOfAccount, 0.2, 1e-9);
+close(ps.riskPctOfAccount, 0.02, 1e-9);
+close(ps.stopDistance, 0.1, 1e-9);
+assert.equal(ps.capped, false);
+// a tight stop would need more than the whole account, so it caps at what the account can buy
+const tight = V.positionSize(1000, 5, 50, 49.5);
+assert.equal(tight.capped, true);
+assert.equal(tight.shares, 20);
+close(tight.dollarRisk, 10, 1e-9);
+// a wide stop buys nothing
+assert.equal(V.positionSize(1000, 1, 100, 10).shares, 0);
+// unusable inputs
+assert.equal(V.positionSize(1000, 2, 50, 50), null, 'stop must be below entry');
+assert.equal(V.positionSize(1000, 2, 50, 55), null);
+assert.equal(V.positionSize(null, 2, 50, 45), null);
+assert.equal(V.positionSize(1000, 0, 50, 45), null);
+assert.equal(V.positionSize(1000, NaN, 50, 45), null);
+
 console.log('All valuation tests passed.');
