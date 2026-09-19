@@ -186,16 +186,46 @@
    * A blank (null) filter is ignored. If a filter is set and the row lacks that metric, the row is hidden.
    */
   function passes(r, F) {
-    if (F.mos !== null && !(r.mos !== null && r.mos * 100 >= F.mos)) return false;
-    if (F.pe !== null && !(r.pe !== null && r.pe > 0 && r.pe <= F.pe)) return false;
-    if (F.roe !== null && !(r.roe !== null && r.roe * 100 >= F.roe)) return false;
-    if (F.de !== null && !(r.debtEq !== null && r.debtEq <= F.de)) return false;
-    if (F.fcf && !(r.fcfps !== null && r.fcfps > 0)) return false;
-    // Growth-screen filters: market cap in millions of USD, revenue growth in percent. Absent or null means off.
-    if (F.capMin != null && !(r.marketCap !== null && r.marketCap >= F.capMin)) return false;
-    if (F.capMax != null && !(r.marketCap !== null && r.marketCap <= F.capMax)) return false;
-    if (F.rev != null && !(r.revGrowth !== null && r.revGrowth * 100 >= F.rev)) return false;
-    return true;
+    return filterChecks(r, F).every((c) => c.pass);
+  }
+
+  /**
+   * One entry per active filter, saying whether the row passes and by how much.
+   *   kind 'pts': actual and threshold are percentages; delta is percentage points (positive = better than the limit).
+   *   kind 'pct': delta is a percent of the limit (positive = better: above a minimum, or under a maximum).
+   *   kind 'flag': a yes/no test with no margin.
+   * A row missing the metric fails with missing: true and delta: null. Market cap is in millions of USD.
+   * key marks the growth-screen filters that the page highlights.
+   */
+  function filterChecks(r, F) {
+    const out = [];
+    const minPts = (id, label, actual, limit, key) => {
+      const missing = actual === null || actual === undefined;
+      out.push({ id, label, kind: 'pts', dir: 'min', key: !!key, actual: missing ? null : actual, limit, missing,
+        pass: !missing && actual >= limit, delta: missing ? null : actual - limit });
+    };
+    const rel = (id, label, actual, limit, dir, key, usable) => {
+      const missing = actual === null || actual === undefined;
+      const ok = !missing && (usable === undefined || usable);
+      const under = dir === 'max';
+      out.push({ id, label, kind: 'pct', dir, key: !!key, actual: missing ? null : actual, limit, missing,
+        pass: ok && (under ? actual <= limit : actual >= limit),
+        delta: ok && limit !== 0 ? ((under ? limit - actual : actual - limit) / limit) * 100 : null });
+    };
+    const on = (v) => v !== null && v !== undefined;
+    if (on(F.mos)) minPts('mos', 'Margin of safety', r.mos === null ? null : r.mos * 100, F.mos);
+    if (on(F.pe)) rel('pe', 'P/E', r.pe, F.pe, 'max', false, r.pe > 0);
+    if (on(F.roe)) minPts('roe', 'ROE', r.roe === null ? null : r.roe * 100, F.roe);
+    if (on(F.de)) rel('de', 'Debt/equity', r.debtEq, F.de, 'max');
+    if (F.fcf) {
+      const missing = r.fcfps === null || r.fcfps === undefined;
+      out.push({ id: 'fcf', label: 'Free cash flow', kind: 'flag', dir: 'min', key: false, actual: missing ? null : r.fcfps,
+        limit: 0, missing, pass: !missing && r.fcfps > 0, delta: null });
+    }
+    if (on(F.capMin)) rel('capMin', 'Market cap (min)', r.marketCap, F.capMin, 'min', true);
+    if (on(F.capMax)) rel('capMax', 'Market cap (max)', r.marketCap, F.capMax, 'max', true);
+    if (on(F.rev)) minPts('rev', 'Revenue growth', r.revGrowth === null ? null : r.revGrowth * 100, F.rev, true);
+    return out;
   }
 
   /**
@@ -221,7 +251,7 @@
     };
   }
 
-  const api = { METRIC_KEYS, WEIGHTS, dcfPerShare, grahamNumber, grahamGrowth, analyze, score, passes, positionSize, median };
+  const api = { METRIC_KEYS, WEIGHTS, dcfPerShare, grahamNumber, grahamGrowth, analyze, score, passes, filterChecks, positionSize, median };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.Valuation = api;
 })(typeof window !== 'undefined' ? window : globalThis);
