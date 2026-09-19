@@ -17,7 +17,7 @@
     'bookValuePerShareQuarterly', 'bookValuePerShareAnnual',
     'freeCashFlowPerShareTTM', 'freeCashFlowPerShareAnnual', 'pfcfShareTTM', 'pfcfShareAnnual',
     'peTTM', 'peBasicExclExtraTTM',
-    'epsGrowth5Y', 'revenueGrowth5Y', 'revenueGrowthTTMYoy',
+    'epsGrowth5Y', 'revenueGrowth5Y', 'revenueGrowthTTMYoy', 'revenueGrowthQuarterlyYoy',
     'roeTTM', 'roeRfy',
     'totalDebt/totalEquityQuarterly', 'totalDebt/totalEquityAnnual',
     'marketCapitalization', '52WeekHigh', '52WeekLow',
@@ -93,6 +93,9 @@
     const growthAssumed = growth === null;
     const g0 = clamp(growthAssumed ? DEFAULT_GROWTH : growth, -0.03, A.growthCap);
 
+    // Latest-quarter revenue growth versus the same quarter a year earlier; falls back to trailing twelve months.
+    const revGrowthPct = first(m, ['revenueGrowthQuarterlyYoy', 'revenueGrowthTTMYoy']);
+
     const roePct = first(m, ['roeTTM', 'roeRfy']);
     const debtEq = first(m, ['totalDebt/totalEquityQuarterly', 'totalDebt/totalEquityAnnual']);
     const divPct = first(m, ['dividendYieldIndicatedAnnual', 'currentDividendYieldTTM']);
@@ -148,6 +151,7 @@
       marketCap: num(m.marketCapitalization), // millions of USD
       hi52, lo52,
       growth, growthAssumed, g0,
+      revGrowth: revGrowthPct !== null ? revGrowthPct / 100 : null,
       models, modelNotes, value, mos, flags,
       score: null
     };
@@ -187,10 +191,37 @@
     if (F.roe !== null && !(r.roe !== null && r.roe * 100 >= F.roe)) return false;
     if (F.de !== null && !(r.debtEq !== null && r.debtEq <= F.de)) return false;
     if (F.fcf && !(r.fcfps !== null && r.fcfps > 0)) return false;
+    // Growth-screen filters: market cap in millions of USD, revenue growth in percent. Absent or null means off.
+    if (F.capMin != null && !(r.marketCap !== null && r.marketCap >= F.capMin)) return false;
+    if (F.capMax != null && !(r.marketCap !== null && r.marketCap <= F.capMax)) return false;
+    if (F.rev != null && !(r.revGrowth !== null && r.revGrowth * 100 >= F.rev)) return false;
     return true;
   }
 
-  const api = { METRIC_KEYS, WEIGHTS, dcfPerShare, grahamNumber, grahamGrowth, analyze, score, passes, median };
+  /**
+   * Fixed-fractional position sizing for a long position: risk a set percent of the account
+   * between the entry and a stop. Returns null for unusable inputs (stop must be below entry).
+   * The result is capped so the position never costs more than the account.
+   */
+  function positionSize(account, riskPct, entry, stop) {
+    if (![account, riskPct, entry, stop].every((v) => typeof v === 'number' && isFinite(v) && v > 0)) return null;
+    if (stop >= entry) return null;
+    const perShare = entry - stop;
+    let shares = Math.floor((account * riskPct / 100) / perShare);
+    let capped = false;
+    if (shares * entry > account) { shares = Math.floor(account / entry); capped = true; }
+    return {
+      shares,
+      value: shares * entry,
+      pctOfAccount: (shares * entry) / account,
+      dollarRisk: shares * perShare,
+      riskPctOfAccount: (shares * perShare) / account,
+      stopDistance: perShare / entry,
+      capped
+    };
+  }
+
+  const api = { METRIC_KEYS, WEIGHTS, dcfPerShare, grahamNumber, grahamGrowth, analyze, score, passes, positionSize, median };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.Valuation = api;
 })(typeof window !== 'undefined' ? window : globalThis);

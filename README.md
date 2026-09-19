@@ -29,6 +29,18 @@ Everything runs in the browser, so it hosts for free on GitHub Pages. There is n
 
 Discount rate, terminal growth, growth cap and AAA yield are adjustable in the page, and the table updates instantly.
 
+## Small-cap growth screen
+
+The **Small-cap growth preset** button sets market cap to $300M–$2B and revenue growth to 17% or more, and turns off the value filters (margin of safety, P/E, ROE, debt/equity). Revenue growth is the latest quarter against the same quarter a year earlier, from Finnhub's `revenueGrowthQuarterlyYoy` (trailing twelve months if that is missing). The filters can also be set by hand.
+
+**Load growth watchlist** fills the ticker box with a snapshot of candidates from a 2026-09-18 research pass: small caps with fast revenue growth, plus large names that appear in several small-cap ETF top-10 lists (most of which have outgrown the $2B ceiling, so the screen will hide them). Market caps and growth change, so the screen decides who passes.
+
+The margin-of-safety models use trailing numbers and lean on the growth rate, so treat their estimates cautiously for fast growers.
+
+## Position size calculator
+
+Enter an account size, a risk percent per trade, an entry price and a stop price. It returns the share count that would lose about that percent if the stop fills, capped at what the account can buy. Price gaps can fill below a stop and lose more. Nothing entered here is saved, and it is arithmetic, not advice.
+
 ## Limits worth knowing
 
 - The models use trailing numbers. They flatter cyclical companies at a profit peak and punish growth companies that reinvest heavily.

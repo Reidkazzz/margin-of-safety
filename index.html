@@ -31,6 +31,7 @@
           <h2>Stocks to screen</h2>
           <label for="tickers">Tickers, separated by spaces or commas</label>
           <textarea id="tickers" rows="5" spellcheck="false"></textarea>
+          <button id="loadWatchlist" class="link" type="button">Load growth watchlist</button>
           <p class="hint">The free plan allows roughly 50 calls a minute and each stock takes two, so 60 tickers take about 3 minutes. Results are saved for 12 hours.</p>
         </section>
 
@@ -53,8 +54,27 @@
             <div><label for="fRoe">Min ROE %</label><input id="fRoe" type="number" step="1" value="8"></div>
             <div><label for="fDe">Max debt / equity</label><input id="fDe" type="number" step="0.1" value="2"></div>
           </div>
+          <div class="pair">
+            <div><label for="fCapMin">Min market cap $M</label><input id="fCapMin" type="number" step="50" min="0"></div>
+            <div><label for="fCapMax">Max market cap $M</label><input id="fCapMax" type="number" step="50" min="0"></div>
+            <div><label for="fRev">Min revenue growth % (YoY)</label><input id="fRev" type="number" step="1"></div>
+          </div>
           <label class="check"><input id="fFcf" type="checkbox" checked> Require positive free cash flow</label>
-          <p class="hint">Leave a box empty to turn that filter off. A stock missing a metric you filter on is hidden.</p>
+          <p class="hint">Leave a box empty to turn that filter off. A stock missing a metric you filter on is hidden. Revenue growth is the latest quarter against the same quarter a year earlier.</p>
+          <button id="presetGrowth" class="link" type="button">Small-cap growth preset</button>
+          <p class="hint">Sets market cap $300M to $2B and revenue growth of 17% or more, and turns off the value filters. The value estimates rely on trailing earnings and lean on the growth rate, so treat them cautiously for fast growers.</p>
+        </section>
+
+        <section class="group">
+          <h2>Position size calculator</h2>
+          <div class="pair">
+            <div><label for="pAcct">Account size $</label><input id="pAcct" type="number" min="0" step="100"></div>
+            <div><label for="pRisk">Risk per trade %</label><input id="pRisk" type="number" min="0" step="0.5"></div>
+            <div><label for="pEntry">Entry price $</label><input id="pEntry" type="number" min="0" step="0.01"></div>
+            <div><label for="pStop">Stop price $</label><input id="pStop" type="number" min="0" step="0.01"></div>
+          </div>
+          <p id="calcOut" class="hint" aria-live="polite"></p>
+          <p class="hint">Sizes a long position so that hitting your stop costs about your chosen percent of the account. Price gaps, such as after earnings, can fill below the stop and lose more. Small caps gap often. This is arithmetic, not advice, and nothing here is saved.</p>
         </section>
 
         <div class="actions">
