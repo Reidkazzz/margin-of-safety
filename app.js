@@ -5,7 +5,7 @@
   const $ = (id) => document.getElementById(id);
 
   const API = 'https://finnhub.io/api/v1';
-  const CACHE_KEY = 'mos.cache.v1';
+  const CACHE_KEY = 'mos.cache.v2'; // v2: adds revenueGrowthQuarterlyYoy to the stored metrics
   const SETTINGS_KEY = 'mos.settings.v1';
   const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
   const CALL_GAP_MS = 1300; // keeps us under the free plan's per-minute limit
@@ -15,6 +15,10 @@
     'MRK ABBV LLY PFE CSCO ORCL INTC IBM QCOM TXN CAT DE HON MMM GE BA LMT UPS FDX MCD SBUX ' +
     'NKE DIS CMCSA VZ T TMUS BAC WFC C GS MS AXP COP KHC GIS MO PM CVS CI F GM'
   ).split(' ');
+
+  // Snapshot from a research pass on 2026-09-18: small-cap growth candidates, plus large names that show up in
+  // several small-cap ETF top-10 lists. Market caps and growth change, so the screen decides who passes.
+  const GROWTH_WATCHLIST = 'INOD QUBT AGIO GSHD BLBD GCT TIC CDNA OUST PENG PGEN PTGX FROG GKOS KRYS EAT'.split(' ');
 
   // Invented companies, only for previewing the layout without an API key.
   const DEMO = {
@@ -75,7 +79,10 @@
     };
   }
   function readFilters() {
-    return { mos: optional('fMos'), pe: optional('fPe'), roe: optional('fRoe'), de: optional('fDe'), fcf: $('fFcf').checked };
+    return {
+      mos: optional('fMos'), pe: optional('fPe'), roe: optional('fRoe'), de: optional('fDe'), fcf: $('fFcf').checked,
+      capMin: optional('fCapMin'), capMax: optional('fCapMax'), rev: optional('fRev')
+    };
   }
   function parseTickers(text) {
     const seen = new Set();
@@ -83,7 +90,7 @@
     return Array.from(seen);
   }
 
-  const SAVED_FIELDS = ['tickers', 'discount', 'termG', 'gCap', 'aaa', 'fMos', 'fPe', 'fRoe', 'fDe'];
+  const SAVED_FIELDS = ['tickers', 'discount', 'termG', 'gCap', 'aaa', 'fMos', 'fPe', 'fRoe', 'fDe', 'fCapMin', 'fCapMax', 'fRev'];
   function saveSettings() {
     const s = { fFcf: $('fFcf').checked, remember: $('remember').checked };
     SAVED_FIELDS.forEach((id) => { s[id] = $(id).value; });
@@ -193,6 +200,8 @@
   const COLUMNS = [
     { key: 'ticker', label: 'Stock', first: true },
     { key: 'price', label: 'Price' },
+    { key: 'marketCap', label: 'Mkt cap' },
+    { key: 'revGrowth', label: 'Rev growth' },
     { key: 'value', label: 'Est. value' },
     { key: 'mos', label: 'Margin of safety', gauge: true },
     { key: 'pe', label: 'P/E' },
@@ -255,6 +264,7 @@
       '<dt>Earnings per share (TTM)</dt><dd>' + fmt.usd(r.eps) + '</dd>' +
       '<dt>Book value per share</dt><dd>' + fmt.usd(r.bvps) + '</dd>' +
       '<dt>Free cash flow per share</dt><dd>' + fmt.usd(r.fcfps) + '</dd>' +
+      '<dt>Revenue growth (YoY)</dt><dd>' + fmt.pct(r.revGrowth, 1) + '</dd>' +
       '<dt>Growth used</dt><dd>' + fmt.pct(r.g0, 1) + '</dd>' +
       '<dt>52-week range</dt><dd>' + range + '</dd>' +
       '<dt>Position in 52-week range</dt><dd>' + position + '</dd>' +
@@ -285,7 +295,7 @@
       const body = shown.length ? shown.map((r) => {
         const isOpen = open.has(r.ticker);
         return '<tr class="row"><td><button type="button" class="tick" data-toggle="' + esc(r.ticker) + '" aria-expanded="' + isOpen + '">' + esc(r.ticker) + '</button></td>' +
-          '<td>' + fmt.usd(r.price) + '</td><td>' + fmt.usd(r.value) + '</td>' +
+          '<td>' + fmt.usd(r.price) + '</td><td>' + fmt.cap(r.marketCap) + '</td><td>' + fmt.pct(r.revGrowth, 0) + '</td><td>' + fmt.usd(r.value) + '</td>' +
           '<td class="gaugecol">' + gauge(r) + '</td>' +
           '<td>' + fmt.x(r.pe) + '</td><td>' + fmt.x(r.pb) + '</td><td>' + fmt.pct(r.fcfYield) + '</td>' +
           '<td>' + fmt.pct(r.roe, 0) + '</td><td>' + fmt.n1(r.debtEq) + '</td><td class="score">' + r.score + '</td></tr>' +
@@ -307,7 +317,8 @@
     const F = readFilters();
     const shown = rows.filter((r) => V.passes(r, F)).sort(compare);
     const cols = [
-      ['ticker', 'Ticker'], ['price', 'Price'], ['value', 'Estimated value'], ['mos', 'Margin of safety'],
+      ['ticker', 'Ticker'], ['price', 'Price'], ['marketCap', 'Market cap ($M)'], ['revGrowth', 'Revenue growth YoY'],
+      ['value', 'Estimated value'], ['mos', 'Margin of safety'],
       ['pe', 'P/E'], ['pb', 'P/B'], ['fcfYield', 'FCF yield'], ['roe', 'ROE'], ['debtEq', 'Debt/equity'], ['score', 'Score']
     ];
     const cell = (v) => (v == null ? '' : typeof v === 'number' ? String(Math.round(v * 10000) / 10000) : '"' + String(v).replace(/"/g, '""') + '"');
@@ -350,8 +361,40 @@
     if (!e.target.closest('.controls')) return;
     if (e.target.id === 'key' && !$('remember').checked) return;
     saveSettings();
+    renderCalc();
     if (e.target.id !== 'key') render();
   });
+
+  /* ---------- presets ---------- */
+  function setFields(values) {
+    Object.keys(values).forEach((id) => { $(id).value = values[id]; });
+    saveSettings();
+    render();
+  }
+  $('presetGrowth').addEventListener('click', () => {
+    // Value-style filters would hide growth stocks, so the preset turns them off.
+    $('fFcf').checked = false;
+    setFields({ fMos: '', fPe: '', fRoe: '', fDe: '', fCapMin: '300', fCapMax: '2000', fRev: '17' });
+    setStatus('Small-cap growth preset: market cap $300M to $2B, revenue growth 17% or more. Margin of safety filters are off.');
+  });
+  $('loadWatchlist').addEventListener('click', () => {
+    $('tickers').value = GROWTH_WATCHLIST.join(' ');
+    saveSettings();
+    setStatus('Growth watchlist loaded (a 2026-09-18 snapshot). Press Run screen to fetch current numbers.');
+  });
+
+  /* ---------- position size calculator ---------- */
+  function renderCalc() {
+    const out = $('calcOut');
+    const r = V.positionSize(optional('pAcct'), optional('pRisk'), optional('pEntry'), optional('pStop'));
+    if (!r) { out.textContent = 'Enter account size, risk %, entry price and a stop price below the entry.'; return; }
+    const pct = (v) => (v * 100).toFixed(1) + '%';
+    out.textContent = r.shares + ' shares. Position ' + fmt.usd(r.value) + ' (' + pct(r.pctOfAccount) + ' of account). ' +
+      'If the stop fills at ' + fmt.usd(optional('pStop')) + ', the loss is ' + fmt.usd(r.dollarRisk) + ' (' + pct(r.riskPctOfAccount) +
+      ' of account); the stop is ' + pct(r.stopDistance) + ' below entry.' +
+      (r.capped ? ' The position was capped at your account size, so the risk is below your limit.' : '') +
+      (r.shares === 0 ? ' The stop is too wide for this risk limit to buy even one share.' : '');
+  }
   $('remember').addEventListener('change', () => {
     saveSettings();
     if (!$('remember').checked) { const s = store.get(SETTINGS_KEY) || {}; delete s.key; store.set(SETTINGS_KEY, s); }
@@ -380,5 +423,6 @@
 
   /* ---------- start ---------- */
   loadSettings();
+  renderCalc();
   render();
 })();
