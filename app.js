@@ -92,7 +92,7 @@
 
   const SAVED_FIELDS = ['tickers', 'discount', 'termG', 'gCap', 'aaa', 'fMos', 'fPe', 'fRoe', 'fDe', 'fCapMin', 'fCapMax', 'fRev'];
   function saveSettings() {
-    const s = { fFcf: $('fFcf').checked, remember: $('remember').checked };
+    const s = { fFcf: $('fFcf').checked, showMisses: $('showMisses').checked, remember: $('remember').checked };
     SAVED_FIELDS.forEach((id) => { s[id] = $(id).value; });
     if ($('remember').checked) s.key = $('key').value;
     store.set(SETTINGS_KEY, s);
@@ -102,6 +102,7 @@
     SAVED_FIELDS.forEach((id) => { if (s[id] != null) $(id).value = s[id]; });
     if (!$('tickers').value.trim()) $('tickers').value = STARTER.join(' ');
     if (s.fFcf != null) $('fFcf').checked = s.fFcf;
+    if (s.showMisses != null) $('showMisses').checked = s.showMisses;
     if (s.remember) { $('remember').checked = true; if (s.key) $('key').value = s.key; }
   }
 
@@ -246,6 +247,52 @@
       '<div class="gauge-mark"></div></div><span class="mos-text ' + cls + '">' + words + '</span></div>';
   }
 
+  /* ---------- filter footnotes: how far each stock beats or misses each active filter ---------- */
+  function checkValue(c, v) {
+    if (v == null) return dash;
+    if (c.id === 'capMin' || c.id === 'capMax') return fmt.cap(v);
+    if (c.kind === 'pts') return v.toFixed(1) + '%';
+    if (c.id === 'pe') return v.toFixed(1) + '×';
+    if (c.id === 'fcf') return fmt.usd(v);
+    return v.toFixed(2);
+  }
+  function checkMargin(c) {
+    if (c.missing) return 'no data';
+    if (c.kind === 'flag') return c.pass ? 'positive' : 'not positive';
+    if (c.delta == null) return c.pass ? 'passes' : 'fails';
+    const size = c.kind === 'pts' ? Math.abs(c.delta).toFixed(1) + ' pts' : Math.abs(c.delta).toFixed(0) + '%';
+    return (c.pass ? 'beats by ' : 'misses by ') + size;
+  }
+  function checkText(c) {
+    if (c.kind === 'flag') return c.label + ': ' + checkValue(c, c.actual) + ', ' + checkMargin(c);
+    return c.label + ': ' + checkValue(c, c.actual) + ' vs ' + c.dir + ' ' + checkValue(c, c.limit) + ', ' + checkMargin(c);
+  }
+  // The line under the ticker: what it misses, or how much it beats the key (or, failing that, all) active filters.
+  function checkNote(r) {
+    if (!r.checks.length) return '';
+    const bit = (c) => c.label + (c.missing ? ': ' : ' ') + checkMargin(c);
+    const fails = r.checks.filter((c) => !c.pass);
+    if (fails.length) return '<span class="fn bad">' + esc(fails.map(bit).join(' · ')) + '</span>';
+    // A market cap window is a range test, so say "in range" rather than a meaningless margin above the floor.
+    const isCap = (c) => c.id === 'capMin' || c.id === 'capMax';
+    const keys = r.checks.filter((c) => c.key);
+    const shownChecks = keys.length ? keys : r.checks;
+    const parts = shownChecks.filter((c) => !isCap(c)).map(bit);
+    if (shownChecks.some(isCap)) parts.unshift('Market cap in range');
+    return '<span class="fn ok">' + esc(parts.join(' · ')) + '</span>';
+  }
+  function checkClass(r, ids) {
+    const cs = r.checks.filter((c) => ids.indexOf(c.id) !== -1);
+    if (!cs.length) return '';
+    return cs.every((c) => c.pass) ? ' class="ok"' : ' class="bad"';
+  }
+  function checksBlock(r) {
+    if (!r.checks.length) return '';
+    return '<div class="checks"><h3>Filter check</h3><ul>' + r.checks.map((c) =>
+      '<li class="' + (c.pass ? 'ok' : 'bad') + '"><span aria-hidden="true">' + (c.pass ? '✓' : '✗') + '</span> ' +
+      '<span class="sr">' + (c.pass ? 'Pass: ' : 'Fail: ') + '</span>' + esc(checkText(c)) + (c.key ? ' <em>key</em>' : '') + '</li>').join('') + '</ul></div>';
+  }
+
   function detail(r) {
     const models = [
       ['Graham number', r.models.graham, r.modelNotes.graham],
@@ -270,20 +317,34 @@
       '<dt>Position in 52-week range</dt><dd>' + position + '</dd>' +
       '<dt>Market cap</dt><dd>' + fmt.cap(r.marketCap) + '</dd>' +
       '<dt>Dividend yield</dt><dd>' + fmt.pct(r.dividendYield, 2) + '</dd></dl></div>' +
-      '<div><h3>Things to check</h3>' + flags + '</div></div></td></tr>';
+      '<div><h3>Things to check</h3>' + flags + '</div>' + checksBlock(r) + '</div></td></tr>';
+  }
+
+  // Every row with its filter checks attached, and the rows to display (misses included only if asked for).
+  function visibleRows() {
+    const { rows } = buildRows();
+    const F = readFilters();
+    rows.forEach((r) => {
+      r.checks = V.filterChecks(r, F);
+      r.pass = r.checks.every((c) => c.pass);
+      r.meets = r.pass ? 'yes' : 'no';
+    });
+    const passing = rows.filter((r) => r.pass);
+    const shown = ($('showMisses').checked ? rows : passing).slice().sort(compare);
+    return { rows, passing, shown };
   }
 
   function render() {
-    const { rows } = buildRows();
-    const F = readFilters();
-    const shown = rows.filter((r) => V.passes(r, F)).sort(compare);
+    const { rows, passing, shown } = visibleRows();
 
     const wrap = $('tablewrap');
     const hasAny = rows.length > 0;
     $('empty').hidden = hasAny;
     wrap.hidden = !hasAny;
+    $('footnote').hidden = !hasAny;
     $('export').hidden = !shown.length;
-    $('count').textContent = hasAny ? shown.length + ' of ' + rows.length + ' stocks pass your filters' : '';
+    $('count').textContent = hasAny ? passing.length + ' of ' + rows.length + ' stocks pass your filters' +
+      ($('showMisses').checked && shown.length > passing.length ? ' (the rest are dimmed)' : '') : '';
 
     if (hasAny) {
       const head = COLUMNS.map((c) => {
@@ -294,8 +355,8 @@
 
       const body = shown.length ? shown.map((r) => {
         const isOpen = open.has(r.ticker);
-        return '<tr class="row"><td><button type="button" class="tick" data-toggle="' + esc(r.ticker) + '" aria-expanded="' + isOpen + '">' + esc(r.ticker) + '</button></td>' +
-          '<td>' + fmt.usd(r.price) + '</td><td>' + fmt.cap(r.marketCap) + '</td><td>' + fmt.pct(r.revGrowth, 0) + '</td><td>' + fmt.usd(r.value) + '</td>' +
+        return '<tr class="row' + (r.pass ? '' : ' miss') + '"><td><button type="button" class="tick" data-toggle="' + esc(r.ticker) + '" aria-expanded="' + isOpen + '">' + esc(r.ticker) + '</button>' + checkNote(r) + '</td>' +
+          '<td>' + fmt.usd(r.price) + '</td><td' + checkClass(r, ['capMin', 'capMax']) + '>' + fmt.cap(r.marketCap) + '</td><td' + checkClass(r, ['rev']) + '>' + fmt.pct(r.revGrowth, 1) + '</td><td>' + fmt.usd(r.value) + '</td>' +
           '<td class="gaugecol">' + gauge(r) + '</td>' +
           '<td>' + fmt.x(r.pe) + '</td><td>' + fmt.x(r.pb) + '</td><td>' + fmt.pct(r.fcfYield) + '</td>' +
           '<td>' + fmt.pct(r.roe, 0) + '</td><td>' + fmt.n1(r.debtEq) + '</td><td class="score">' + r.score + '</td></tr>' +
@@ -313,13 +374,12 @@
 
   /* ---------- export ---------- */
   function exportCsv() {
-    const { rows } = buildRows();
-    const F = readFilters();
-    const shown = rows.filter((r) => V.passes(r, F)).sort(compare);
+    const { shown } = visibleRows();
     const cols = [
       ['ticker', 'Ticker'], ['price', 'Price'], ['marketCap', 'Market cap ($M)'], ['revGrowth', 'Revenue growth YoY'],
       ['value', 'Estimated value'], ['mos', 'Margin of safety'],
-      ['pe', 'P/E'], ['pb', 'P/B'], ['fcfYield', 'FCF yield'], ['roe', 'ROE'], ['debtEq', 'Debt/equity'], ['score', 'Score']
+      ['pe', 'P/E'], ['pb', 'P/B'], ['fcfYield', 'FCF yield'], ['roe', 'ROE'], ['debtEq', 'Debt/equity'], ['score', 'Score'],
+      ['meets', 'Meets filters']
     ];
     const cell = (v) => (v == null ? '' : typeof v === 'number' ? String(Math.round(v * 10000) / 10000) : '"' + String(v).replace(/"/g, '""') + '"');
     const lines = [cols.map((c) => c[1]).join(',')].concat(shown.map((r) => cols.map((c) => cell(r[c[0]])).join(',')));
@@ -374,6 +434,7 @@
   $('presetGrowth').addEventListener('click', () => {
     // Value-style filters would hide growth stocks, so the preset turns them off.
     $('fFcf').checked = false;
+    $('showMisses').checked = true; // so near-misses stay visible, dimmed, with how far they miss by
     setFields({ fMos: '', fPe: '', fRoe: '', fDe: '', fCapMin: '300', fCapMax: '2000', fRev: '17' });
     setStatus('Small-cap growth preset: market cap $300M to $2B, revenue growth 17% or more. Margin of safety filters are off.');
   });
