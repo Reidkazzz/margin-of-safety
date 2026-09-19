@@ -25,6 +25,7 @@
   ];
 
   const DEFAULT_GROWTH = 0.03; // used when the data provider has no growth figures
+  const GROWTH_DISAGREE_PTS = 10; // flag when 5-year EPS and revenue growth differ by more than this many points
 
   const num = (v) => (typeof v === 'number' && isFinite(v) ? v : null);
   const first = (m, keys) => {
@@ -84,7 +85,9 @@
     }
 
     // Growth: average of 5-year EPS and revenue growth; fall back to latest revenue growth.
-    let parts = [num(m.epsGrowth5Y), num(m.revenueGrowth5Y)].filter((v) => v !== null);
+    const epsG = num(m.epsGrowth5Y);
+    const revG = num(m.revenueGrowth5Y);
+    let parts = [epsG, revG].filter((v) => v !== null);
     if (!parts.length) parts = [num(m.revenueGrowthTTMYoy)].filter((v) => v !== null);
     const growth = parts.length ? parts.reduce((a, b) => a + b, 0) / parts.length / 100 : null;
     const growthAssumed = growth === null;
@@ -119,6 +122,7 @@
     if (eps !== null && eps <= 0) flags.push('Negative earnings, so P/E and two of the three models are unavailable.');
     if (fcfps !== null && fcfps <= 0) flags.push('Negative free cash flow.');
     if (growthAssumed) flags.push('No growth data; assumed ' + DEFAULT_GROWTH * 100 + '% growth.');
+    if (available.length === 0) flags.push('No valuation model could run, so there is no value estimate or margin of safety.');
     if (available.length === 1) flags.push('Only one model could run, so treat the value estimate with extra caution.');
     if (available.length > 1) {
       const hi = Math.max.apply(null, available);
@@ -128,7 +132,10 @@
     if (hi52 && lo52 && hi52 > lo52 && (price - lo52) / (hi52 - lo52) < 0.1) {
       flags.push('Trading near its 52-week low. Cheap for a reason? Check for a value trap.');
     }
-    if (growth !== null && growth > A.growthCap) flags.push('Reported growth was capped at ' + A.growthCap * 100 + '%.');
+    if (epsG !== null && revG !== null && Math.abs(epsG - revG) > GROWTH_DISAGREE_PTS) {
+      flags.push('EPS growth (' + epsG.toFixed(1) + '%) and revenue growth (' + revG.toFixed(1) + '%) differ a lot, so the blended growth rate is less reliable.');
+    }
+    if (growth !== null && growth > A.growthCap) flags.push('Reported growth was capped at ' + Math.round(A.growthCap * 10000) / 100 + '%.');
 
     return {
       price, eps, bvps, fcfps, pe, pb,
